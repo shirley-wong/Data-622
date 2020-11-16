@@ -1,0 +1,715 @@
+---
+title: "Data 622 HW1: Run the Model"
+author: "Sin Ying Wong"
+date: "10/10/2020"
+output:
+  rmdformats::readthedown:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: yes
+    smooth_scroll: yes
+    theme: united
+    toc_collapsed: yes
+    toc_depth: 5
+    toc_float: yes
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_collapsed: yes
+    toc_float: yes
+  pdf_document:
+    extra_dependencies:
+    - geometry
+    - multicol
+    - multirow
+  word_document:
+    toc: yes
+    toc_depth: '5'
+theme: lumen
+number_sections: yes
+toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(caret)
+library(ggplot2)
+library(GGally)
+library(e1071)
+library(class)
+library(kknn)
+library(knitr)
+```
+
+# Data Exploration
+
+This is a dataset with 36 observations of 3 variables with no missing values. 
+
+X and Y are predictor variables and label is target variable, where X is numerical, Y and label are categorical variables.
+
+```{r import data}
+set.seed(999)
+df <- read.csv("hw1.txt", header=TRUE) %>%
+  mutate_all(str_trim) %>%
+  mutate(X = X %>% as.numeric()) %>%
+  mutate_if(is.character,as.factor)
+glimpse(df)
+summary(df)
+df
+
+```
+
+
+```{r plot data}
+ggplot(df, aes(x=X, y=Y, shape=label, col=label)) +
+  geom_point(size=5) +
+  scale_color_manual(values=c('Black', '#56B4E9')) +
+  labs(title = "Scatter Plot")
+ggpairs(df, aes(col=label, alpha=0.5)) +
+  labs(title = "Pair Plot")
+```
+
+# Building Models
+
+I am going to model the dataset using Logistic Regression, Naive Bayes, and kNN (k=3,k=5) methods below. 
+
+```{r building models}
+#train-test-split
+df_split <- initial_split(df, prop=0.7)
+df_train <- training(df_split)
+df_test <- testing(df_split)
+```
+
+## Logistic Regression
+
+```{r}
+# logistic regression model
+lr_model <- logistic_reg() %>%
+  # using model classification
+  set_mode('classification') %>%
+  # use glm function
+  set_engine('glm') %>%
+  #fit training data
+  fit(label ~ ., df_train)
+
+lr_model
+```
+
+```{r}
+lr_train_pred <- lr_model %>% 
+  #make prediction on training data
+  predict(df_train) %>%
+  # rename the prediction column
+  mutate(prediction = `.pred_class`) %>%
+  # merge the prediction result back to training data set
+  bind_cols(df_train) %>%
+  # reorder columns to focus on the predicton value and actual label
+  select(prediction, label, everything())
+lr_train_pred
+  
+lr_train_cm <- lr_train_pred %>% 
+  #use only prediction values and actual label
+  select(prediction, label) %>%
+  #construct confusion matrix
+  table() %>%
+  #display as matrix
+  as.matrix()
+lr_train_cm
+
+lr_train_pred %>%
+  metrics(truth = label, estimate = prediction)
+````
+
+
+```{r}
+tp<-lr_train_cm[1,1]
+fp<-lr_train_cm[1,2]
+fn<-lr_train_cm[2,1]
+tn<-lr_train_cm[2,2]
+
+accuracy <- (tp+tn)/(tp+tn+fp+fn) #accurary=(TP+TN/P+N)
+tpr <- tp/(tp+fn) #TPR=TP/(TP+FN)
+fpr <- fp/(fp+tn) #FPR=FP/(FP+TN)
+tnr <- tn/(tn+fp) #TNR=TN/(TN+FP)
+fnr <- fn/(fn+tp) #FNR=FN/(FN+TP)
+
+
+lr_pred_prob_tr <- lr_train_pred %>%
+  cbind(predict(lr_model, df_train, type='prob'))
+lr_pred_prob_tr %>%
+  roc_curve(label, c(.pred_BLACK)) %>%
+  autoplot()
+
+auc <- lr_pred_prob_tr %>%
+  roc_auc(label, c(.pred_BLACK)) %>%
+  .[1,3] %>%
+  as.numeric()
+
+train_r1 <- data.frame(AUC = auc, 
+                       ACCURACY = accuracy, 
+                       TPR = tpr, 
+                       FPR = fpr, 
+                       TNR = tnr, 
+                       FNR = fnr) %>%
+  mutate(Algo = 'LR') %>%
+  select(Algo, everything())
+
+train_r1 %>%
+  kable(caption = 'Training')
+
+```
+
+
+
+
+```{r}
+lr_test_pred <- lr_model %>% 
+  #make prediction on testing data
+  predict(df_test) %>%
+  # rename the prediction column
+  mutate(prediction = `.pred_class`) %>%
+  # merge the prediction result back to training data set
+  bind_cols(df_test) %>%
+  # reorder columns to focus on the predicton value and actual label
+  select(prediction, label, everything())
+lr_test_pred
+
+lr_test_cm <- lr_test_pred %>% 
+  #use only prediction values and actual label
+  select(prediction, label) %>%
+  #construct confusion matrix
+  table() %>%
+  #display as matrix
+  as.matrix()
+lr_test_cm
+
+lr_test_pred %>%
+  metrics(truth = label, estimate = prediction)
+```
+
+
+
+```{r}
+tp<-lr_test_cm[1,1]
+fp<-lr_test_cm[1,2]
+fn<-lr_test_cm[2,1]
+tn<-lr_test_cm[2,2]
+
+accuracy <- (tp+tn)/(tp+tn+fp+fn) #accurary=(TP+TN/P+N)
+tpr <- tp/(tp+fn) #TPR=TP/(TP+FN)
+fpr <- fp/(fp+tn) #FPR=FP/(FP+TN)
+tnr <- tn/(tn+fp) #TNR=TN/(TN+FP)
+fnr <- fn/(fn+tp) #FNR=FN/(FN+TP)
+
+lr_pred_prob_te <- lr_test_pred %>%
+  cbind(predict(lr_model, df_test, type='prob'))
+lr_pred_prob_te %>%
+  roc_curve(label, c(.pred_BLACK)) %>%
+  autoplot()
+
+auc <- lr_pred_prob_te %>%
+  roc_auc(label, c(.pred_BLACK)) %>%
+  .[1,3] %>%
+  as.numeric()
+
+test_r1 <- data.frame(AUC = auc, 
+                       ACCURACY = accuracy, 
+                       TPR = tpr, 
+                       FPR = fpr, 
+                       TNR = tnr, 
+                       FNR = fnr) %>%
+  mutate(Algo = 'LR') %>%
+  select(Algo, everything())
+test_r1 %>%
+  kable(caption = 'Testing')
+```
+
+
+
+
+## Naive Bayes
+
+```{r}
+# Naive Bayes model
+nb_model <- naiveBayes(label ~ ., df_train)
+nb_model
+```
+
+```{r}
+nb_train_pred <- nb_model %>% 
+  #make prediction on training data
+  predict(df_train) %>%
+  data.frame(prediction = .) %>%
+  # merge the prediction result back to training data set
+  bind_cols(df_train) %>%
+  # reorder columns to focus on the predicton value and actual label
+  select(prediction, label, everything())
+
+nb_train_pred
+
+nb_train_cm <- nb_train_pred %>% 
+  #use only prediction values and actual label
+  select(prediction, label) %>%
+  #construct confusion matrix
+  table() %>%
+  #display as matrix
+  as.matrix()
+nb_train_cm
+
+nb_train_pred %>%
+  metrics(truth = label, estimate = prediction)
+```
+
+
+```{r}
+tp<-nb_train_cm[1,1]
+fp<-nb_train_cm[1,2]
+fn<-nb_train_cm[2,1]
+tn<-nb_train_cm[2,2]
+
+accuracy <- (tp+tn)/(tp+tn+fp+fn) #accurary=(TP+TN/P+N)
+tpr <- tp/(tp+fn) #TPR=TP/(TP+FN)
+fpr <- fp/(fp+tn) #FPR=FP/(FP+TN)
+tnr <- tn/(tn+fp) #TNR=TN/(TN+FP)
+fnr <- fn/(fn+tp) #FNR=FN/(FN+TP)
+
+
+nb_pred_prob_tr <- nb_train_pred %>%
+  cbind(predict(nb_model, df_train, type='raw'))
+nb_pred_prob_tr %>%
+  roc_curve(label, c(BLACK)) %>%
+  autoplot()
+
+auc <- nb_pred_prob_tr %>%
+  roc_auc(label, c(BLACK)) %>%
+  .[1,3] %>%
+  as.numeric()
+
+train_r2 <- data.frame(AUC = auc, 
+                       ACCURACY = accuracy, 
+                       TPR = tpr, 
+                       FPR = fpr, 
+                       TNR = tnr, 
+                       FNR = fnr) %>%
+  mutate(Algo = 'NB') %>%
+  select(Algo, everything())
+
+train_r1 %>% 
+  bind_rows(train_r2) %>%
+  kable(caption = 'Training')
+```
+
+
+
+
+```{r}
+nb_test_pred <- nb_model %>% 
+  #make prediction on testing data
+  predict(df_test) %>%
+  data.frame(prediction = .) %>%
+  # merge the prediction result back to training data set
+  bind_cols(df_test) %>%
+  # reorder columns to focus on the predicton value and actual label
+  select(prediction, label, everything())
+nb_test_pred
+
+nb_test_cm <- nb_test_pred %>% 
+  #use only prediction values and actual label
+  select(prediction, label) %>%
+  #construct confusion matrix
+  table() %>%
+  #display as matrix
+  as.matrix()
+nb_test_cm
+
+nb_test_pred %>%
+  metrics(truth = label, estimate = prediction)
+```
+
+
+```{r}
+tp<-nb_test_cm[1,1]
+fp<-nb_test_cm[1,2]
+fn<-nb_test_cm[2,1]
+tn<-nb_test_cm[2,2]
+
+accuracy <- (tp+tn)/(tp+tn+fp+fn) #accurary=(TP+TN/P+N)
+tpr <- tp/(tp+fn) #TPR=TP/(TP+FN)
+fpr <- fp/(fp+tn) #FPR=FP/(FP+TN)
+tnr <- tn/(tn+fp) #TNR=TN/(TN+FP)
+fnr <- fn/(fn+tp) #FNR=FN/(FN+TP)
+
+
+nb_pred_prob_te <- nb_test_pred %>%
+  cbind(predict(nb_model, df_test, type='raw'))
+nb_pred_prob_tr %>%
+  roc_curve(label, c(BLACK)) %>%
+  autoplot()
+
+auc <- nb_pred_prob_te %>%
+  roc_auc(label, c(BLACK)) %>%
+  .[1,3] %>%
+  as.numeric()
+
+test_r2 <- data.frame(AUC = auc, 
+                       ACCURACY = accuracy, 
+                       TPR = tpr, 
+                       FPR = fpr, 
+                       TNR = tnr, 
+                       FNR = fnr) %>%
+  mutate(Algo = 'NB') %>%
+  select(Algo, everything())
+test_r1 %>% 
+  bind_rows(test_r2) %>%
+  kable(caption = 'Testing')
+```
+
+
+
+## kNN
+
+### k=3
+
+```{r}
+# kNN model with k=3
+knn3_model <- nearest_neighbor(neighbors = 3) %>%
+  set_mode('classification') %>%
+  set_engine('kknn') %>%
+  fit(label ~ ., df_train)
+
+knn3_model
+```
+
+
+```{r}
+knn3_train_pred <- knn3_model %>% 
+  #make prediction on training data
+  predict(df_train) %>%
+  rename(prediction = `.pred_class`) %>%
+  # merge the prediction result back to training data set
+  bind_cols(df_train) %>%
+  # reorder columns to focus on the predicton value and actual label
+  select(prediction, label, everything())
+knn3_train_pred
+  
+knn3_train_cm <- knn3_train_pred %>% 
+  #use only prediction values and actual label
+  select(prediction, label) %>%
+  #construct confusion matrix
+  table() %>%
+  #display as matrix
+  as.matrix()
+knn3_train_cm
+
+knn3_train_pred %>%
+  metrics(truth = label, estimate = prediction)
+```
+
+
+```{r}
+tp<-knn3_train_cm[1,1]
+fp<-knn3_train_cm[1,2]
+fn<-knn3_train_cm[2,1]
+tn<-knn3_train_cm[2,2]
+
+accuracy <- (tp+tn)/(tp+tn+fp+fn) #accurary=(TP+TN/P+N)
+tpr <- tp/(tp+fn) #TPR=TP/(TP+FN)
+fpr <- fp/(fp+tn) #FPR=FP/(FP+TN)
+tnr <- tn/(tn+fp) #TNR=TN/(TN+FP)
+fnr <- fn/(fn+tp) #FNR=FN/(FN+TP)
+
+knn3_pred_prob_tr <- knn3_train_pred %>%
+  cbind(predict(knn3_model, df_train, type='prob'))
+knn3_pred_prob_tr %>%
+  roc_curve(label, c(.pred_BLACK)) %>%
+  autoplot()
+
+auc <- knn3_pred_prob_tr %>%
+  roc_auc(label, c(.pred_BLACK)) %>%
+  .[1,3] %>%
+  as.numeric()
+
+train_r3 <- data.frame(AUC = auc, 
+                       ACCURACY = accuracy, 
+                       TPR = tpr, 
+                       FPR = fpr, 
+                       TNR = tnr, 
+                       FNR = fnr) %>%
+  mutate(Algo = 'kNN_3') %>%
+  select(Algo, everything())
+
+train_r1 %>% 
+  bind_rows(train_r2, train_r3) %>%
+  kable(caption = 'Training')
+```
+
+
+
+```{r}
+knn3_test_pred <- knn3_model %>% 
+  #make prediction on testing data
+  predict(df_test) %>%
+  # rename the prediction column
+  mutate(prediction = `.pred_class`) %>%
+  # merge the prediction result back to training data set
+  bind_cols(df_test) %>%
+  # reorder columns to focus on the predicton value and actual label
+  select(prediction, label, everything())
+knn3_test_pred
+
+knn3_test_cm <- knn3_test_pred %>% 
+  #use only prediction values and actual label
+  select(prediction, label) %>%
+  #construct confusion matrix
+  table() %>%
+  #display as matrix
+  as.matrix()
+knn3_test_cm
+
+knn3_test_pred %>%
+  metrics(truth = label, estimate = prediction)
+```
+
+
+
+```{r}
+tp<-knn3_test_cm[1,1]
+fp<-knn3_test_cm[1,2]
+fn<-knn3_test_cm[2,1]
+tn<-knn3_test_cm[2,2]
+
+accuracy <- (tp+tn)/(tp+tn+fp+fn) #accurary=(TP+TN/P+N)
+tpr <- tp/(tp+fn) #TPR=TP/(TP+FN)
+fpr <- fp/(fp+tn) #FPR=FP/(FP+TN)
+tnr <- tn/(tn+fp) #TNR=TN/(TN+FP)
+fnr <- fn/(fn+tp) #FNR=FN/(FN+TP)
+
+knn3_pred_prob_te <- knn3_test_pred %>%
+  cbind(predict(knn3_model, df_test, type='prob'))
+knn3_pred_prob_te %>%
+  roc_curve(label, c(.pred_BLACK)) %>%
+  autoplot()
+
+auc <- knn3_pred_prob_te %>%
+  roc_auc(label, c(.pred_BLACK)) %>%
+  .[1,3] %>% 
+  as.numeric()
+  
+
+test_r3 <- data.frame(AUC = auc, 
+                       ACCURACY = accuracy, 
+                       TPR = tpr, 
+                       FPR = fpr, 
+                       TNR = tnr, 
+                       FNR = fnr) %>%
+  mutate(Algo = 'kNN_3') %>%
+  select(Algo, everything())
+
+test_r1 %>% 
+  bind_rows(test_r2, test_r3) %>%
+  kable(caption = 'Testing')
+```
+
+
+
+
+
+### k=5
+
+```{r}
+# kNN model with k=5
+knn5_model <- nearest_neighbor(neighbors = 5) %>%
+  set_mode('classification') %>%
+  set_engine('kknn') %>%
+  fit(label ~ ., df_train)
+
+knn5_model
+```
+
+
+```{r}
+knn5_train_pred <- knn5_model %>% 
+  #make prediction on training data
+  predict(df_train) %>%
+  rename(prediction = `.pred_class`) %>%
+  # merge the prediction result back to training data set
+  bind_cols(df_train) %>%
+  # reorder columns to focus on the predicton value and actual label
+  select(prediction, label, everything())
+knn5_train_pred
+  
+knn5_train_cm <- knn5_train_pred %>% 
+  #use only prediction values and actual label
+  select(prediction, label) %>%
+  #construct confusion matrix
+  table() %>%
+  #display as matrix
+  as.matrix()
+knn5_train_cm
+
+knn5_train_pred %>%
+  metrics(truth = label, estimate = prediction)
+```
+
+
+```{r}
+tp<-knn5_train_cm[1,1]
+fp<-knn5_train_cm[1,2]
+fn<-knn5_train_cm[2,1]
+tn<-knn5_train_cm[2,2]
+
+accuracy <- (tp+tn)/(tp+tn+fp+fn) #accurary=(TP+TN/P+N)
+tpr <- tp/(tp+fn) #TPR=TP/(TP+FN)
+fpr <- fp/(fp+tn) #FPR=FP/(FP+TN)
+tnr <- tn/(tn+fp) #TNR=TN/(TN+FP)
+fnr <- fn/(fn+tp) #FNR=FN/(FN+TP)
+
+knn5_pred_prob_tr <- knn5_train_pred %>%
+  cbind(predict(knn5_model, df_train, type='prob'))
+knn5_pred_prob_tr %>%
+  roc_curve(label, c(.pred_BLACK)) %>%
+  autoplot()
+
+auc <- knn5_pred_prob_tr %>%
+  roc_auc(label, c(.pred_BLACK)) %>%
+  .[1,3] %>% 
+  as.numeric()
+
+train_r4 <- data.frame(AUC = auc, 
+                       ACCURACY = accuracy, 
+                       TPR = tpr, 
+                       FPR = fpr, 
+                       TNR = tnr, 
+                       FNR = fnr) %>%
+  mutate(Algo = 'kNN_5') %>%
+  select(Algo, everything())
+
+
+train_r1 %>% 
+  bind_rows(train_r2, train_r3,train_r4) %>%
+  kable(caption = 'Training')
+```
+
+
+
+
+```{r}
+knn5_test_pred <- knn5_model %>% 
+  #make prediction on testing data
+  predict(df_test) %>%
+  # rename the prediction column
+  mutate(prediction = `.pred_class`) %>%
+  # merge the prediction result back to training data set
+  bind_cols(df_test) %>%
+  # reorder columns to focus on the predicton value and actual label
+  select(prediction, label, everything())
+knn5_test_pred
+
+knn5_test_cm <- knn5_test_pred %>% 
+  #use only prediction values and actual label
+  select(prediction, label) %>%
+  #construct confusion matrix
+  table() %>%
+  #display as matrix
+  as.matrix()
+knn5_test_cm
+
+knn5_test_pred %>%
+  metrics(truth = label, estimate = prediction)
+```
+
+
+
+```{r}
+tp<-knn5_test_cm[1,1]
+fp<-knn5_test_cm[1,2]
+fn<-knn5_test_cm[2,1]
+tn<-knn5_test_cm[2,2]
+
+accuracy <- (tp+tn)/(tp+tn+fp+fn) #accurary=(TP+TN/P+N)
+tpr <- tp/(tp+fn) #TPR=TP/(TP+FN)
+fpr <- fp/(fp+tn) #FPR=FP/(FP+TN)
+tnr <- tn/(tn+fp) #TNR=TN/(TN+FP)
+fnr <- fn/(fn+tp) #FNR=FN/(FN+TP)
+
+knn5_pred_prob_te <- knn5_test_pred %>%
+  cbind(predict(knn5_model, df_test, type='prob'))
+knn5_pred_prob_te %>%
+  roc_curve(label, c(.pred_BLACK)) %>%
+  autoplot()
+
+auc <- knn5_pred_prob_te %>%
+  roc_auc(label, c(.pred_BLACK)) %>%
+  .[1,3] %>%
+  as.numeric()
+
+test_r4 <- data.frame(AUC = auc, 
+                       ACCURACY = accuracy, 
+                       TPR = tpr, 
+                       FPR = fpr, 
+                       TNR = tnr, 
+                       FNR = fnr) %>%
+  mutate(Algo = 'kNN_5') %>%
+  select(Algo, everything())
+
+test_r1 %>% 
+  bind_rows(test_r2, test_r3, test_r4) %>%
+  kable(caption = 'Testing')
+```
+
+
+
+# Performance
+
+
+## Metrics of Training Data
+
+|      |        |          | Training |        |        |        |
+|------|--------|----------|----------|--------|--------|--------|
+| Algo | AUC    | ACCURACY | TPR      | FPR    | TNR    | FNR    |
+| LR   | 0.8875 | 0.8077   | 0.9375   | 0.4    | 0.6    | 0.0625 |
+| NB   | 0.8938 | 0.7692   | 0.9375   | 0.5    | 0.5    | 0.0625 |
+| kNN3 |  1     |   1      |  1       |  0     |  1     |  0     |
+| kNN5 | 0.9844 | 0.8846   |  1       | 0.3    | 0.7    |  0     |
+
+
+## Metrics of Testing Data
+
+|      |        |          | Testing  |        |        |        |
+|------|--------|----------|----------|--------|--------|--------|
+| Algo | AUC    | ACCURACY | TPR      | FPR    | TNR    | FNR    |
+| LR   | 0.25   | 0.4      | 0.5      | 0.75   | 0.25   | 0.5    |
+| NB   | 0.2917 | 0.5      | 0.6667   | 0.75   | 0.25   | 0.3333 |
+| kNN3 | 0.5208 | 0.6      | 0.8333   | 0.75   | 0.25   | 0.1667 |
+| kNN5 | 0.6042 | 0.7      | 0.8333   | 0.5    | 0.5    | 0.1667 |
+
+
+## Short Summary
+
+Logistic regression is a disciminative model. The logistic regression model of training data has the lowest AUC and 2nd lowest accuracy among the 4 models. The logistic regression model of testing data has the lowest AUC and accuracy.  Overall, it performs the worst among all.
+
+Naive Bayes is a generative model based on the joint probability. The Naive Bayes model of training data has the 2nd lowest AUC and the lowest accuracy. The Naive Bayes of testing data has the 2nd lowest AUC and accuracy.  Overall, it did not perform well among the 4 models.
+
+kNN stores available cases and classifies new cases based on a similarity measure. 
+- The kNN model with k=3 of training data has the highest AUC and accuracy. It performs well in training data.
+- The kNN model with k=3 of testing data has the 2nd highest AUC and accuracy. It performs fairly well in testing data.
+- The kNN model with k=5 of training data has the 2nd highest AUC and accuracy. It performs fairly well in training data.
+- The kNN model with k=5 of testing data has the highest AUC and accuracy. It performs well in testing data.
+- Overall, kNN models perform well.
+
+# Conclusion
+
+## Best Ability to Learn
+The performance data shows that kNN models are the best models. While the performance for k=3 and k=5 are silimar, kNN model with k=3 has the best performance in training data, i.e. it has the best ability to learn among all models.
+
+## Best Ability to Generalize
+The performance data shows that kNN models are the best models. While the performance for k=3 and k=5 are silimar, kNN model with k=5 has the best performance in testing data, i.e. it has the best ability to generalize among all models.
+
+## Future Improvement
+For a small data set with only 36 observations, it is very hard to say which model can always perform the best. The amount of data and its structure is not ideal and not realistic compare to the real world for any particular classifier. A larger dataset with 1k~1M observations with more variables could improve our study on the 4 models and can provide a more confirmative conclusion on which model performs the best.

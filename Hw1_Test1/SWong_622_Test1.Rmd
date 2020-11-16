@@ -1,0 +1,349 @@
+---
+title: "Data 622 Test 1: Bagging and LOOCV"
+author: "Sin Ying Wong"
+date: "11/15/2020"
+output:
+  pdf_document:
+    extra_dependencies:
+    - geometry
+    - multicol
+    - multirow
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_collapsed: yes
+    toc_float: yes
+  rmdformats::readthedown:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    number_sections: yes
+    smooth_scroll: yes
+    theme: united
+    toc_collapsed: yes
+    toc_depth: 5
+    toc_float: yes
+  word_document:
+    toc: yes
+    toc_depth: '5'
+theme: lumen
+number_sections: yes
+toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(caret)
+library(ggplot2)
+library(GGally)
+library(e1071)
+library(class)
+library(kknn)
+library(knitr)
+library(ipred)
+library(caret)
+```
+
+This Test1 is also available on [RPubs](https://rpubs.com/shirleywong/data622test1).
+
+# Data Exploration
+
+This is a dataset with 36 observations of 3 variables with no missing values. 
+
+X and Y are predictor variables and label is target variable, where X is numerical, Y and label are categorical variables.
+
+```{r import data}
+set.seed(999)
+df <- read.csv("hw1.txt", header=TRUE) %>%
+  mutate_all(str_trim) %>%
+  mutate(X = X %>% as.numeric()) %>%
+  mutate_if(is.character,as.factor)
+glimpse(df)
+summary(df)
+df
+```
+
+
+```{r plot data}
+ggplot(df, aes(x=X, y=Y, shape=label, col=label)) +
+  geom_point(size=5) +
+  scale_color_manual(values=c('Black', '#56B4E9')) +
+  labs(title = "Scatter Plot")
+ggpairs(df, aes(col=label, alpha=0.5)) +
+  labs(title = "Pair Plot")
+```
+
+# Building Models
+
+I am going to model the dataset using `Bagging` and `LOOCV` methods below. 
+
+Train-test-split at 70%:
+
+```{r building models}
+#train-test-split
+df_split <- initial_split(df, prop=0.7)
+df_train <- training(df_split)
+df_test <- testing(df_split)
+```
+
+## Bagging
+
+I will use the `bagging` function from package `ipred` as instructed by the test.
+
+```{r}
+# bagging model
+bagging_model <- bagging(label~., data=df, nbagg=100, coob=TRUE)
+
+bagging_model
+```
+
+The out-of-bag error is predicted as 0.2222, which is fairly good. 
+
+```{r}
+bagging_train_pred <- bagging_model %>% 
+  #make prediction on training data
+  predict(df_train) %>%
+  as.data.frame() %>%
+  rename(prediction='.') %>%
+  # merge the prediction result back to training data set
+  bind_cols(df_train) %>%
+  # reorder columns to focus on the predicton value and actual label
+  select(prediction, label, everything())
+bagging_train_pred
+
+bagging_train_cm <- bagging_train_pred %>% 
+  #use only prediction values and actual label
+  select(prediction, label) %>%
+  #construct confusion matrix
+  table() %>%
+  #display as matrix
+  as.matrix()
+bagging_train_cm
+
+bagging_train_pred %>%
+  metrics(truth = label, estimate = prediction)
+```
+
+
+```{r}
+tp<-bagging_train_cm[1,1]
+fp<-bagging_train_cm[1,2]
+fn<-bagging_train_cm[2,1]
+tn<-bagging_train_cm[2,2]
+
+accuracy <- (tp+tn)/(tp+tn+fp+fn) #accurary=(TP+TN/P+N)
+tpr <- tp/(tp+fn) #TPR=TP/(TP+FN)
+fpr <- fp/(fp+tn) #FPR=FP/(FP+TN)
+tnr <- tn/(tn+fp) #TNR=TN/(TN+FP)
+fnr <- fn/(fn+tp) #FNR=FN/(FN+TP)
+
+
+bagging_pred_prob_tr <- bagging_train_pred %>%
+  cbind(predict(bagging_model, df_train, type='prob'))
+bagging_pred_prob_tr
+bagging_pred_prob_tr %>%
+  roc_curve(label, c(BLACK)) %>%
+  autoplot()
+
+auc <- bagging_pred_prob_tr %>%
+  roc_auc(label, c(BLACK)) %>%
+  .[1,3] %>%
+  as.numeric()
+
+train_r1 <- data.frame(AUC = auc, 
+                       ACCURACY = accuracy, 
+                       TPR = tpr, 
+                       FPR = fpr, 
+                       TNR = tnr, 
+                       FNR = fnr) %>%
+  mutate(Algo = 'Bagging') %>%
+  select(Algo, everything())
+
+train_r1 %>%
+  kable(caption = 'Training')
+
+```
+
+The accuracy is 1.
+
+The sensitivity = TP/(TP+FN) = 1
+
+The specificity = TN/(FN+TN) = 1
+
+
+```{r}
+bagging_test_pred <- bagging_model %>% 
+  #make prediction on testing data
+  predict(df_test) %>%
+  as.data.frame() %>%
+  rename(prediction='.') %>%
+  # merge the prediction result back to training data set
+  bind_cols(df_test) %>%
+  # reorder columns to focus on the predicton value and actual label
+  select(prediction, label, everything())
+bagging_test_pred
+
+bagging_test_cm <- bagging_test_pred %>% 
+  #use only prediction values and actual label
+  select(prediction, label) %>%
+  #construct confusion matrix
+  table() %>%
+  #display as matrix
+  as.matrix()
+bagging_test_cm
+
+bagging_test_pred %>%
+  metrics(truth = label, estimate = prediction)
+```
+
+
+
+```{r}
+tp<-bagging_test_cm[1,1]
+fp<-bagging_test_cm[1,2]
+fn<-bagging_test_cm[2,1]
+tn<-bagging_test_cm[2,2]
+
+accuracy <- (tp+tn)/(tp+tn+fp+fn) #accurary=(TP+TN/P+N)
+tpr <- tp/(tp+fn) #TPR=TP/(TP+FN)
+fpr <- fp/(fp+tn) #FPR=FP/(FP+TN)
+tnr <- tn/(tn+fp) #TNR=TN/(TN+FP)
+fnr <- fn/(fn+tp) #FNR=FN/(FN+TP)
+
+bagging_pred_prob_te <- bagging_test_pred %>%
+  cbind(predict(bagging_model, df_test, type='prob'))
+bagging_pred_prob_te %>%
+  roc_curve(label, c(BLACK)) %>%
+  autoplot()
+
+auc <- bagging_pred_prob_te %>%
+  roc_auc(label, c(BLACK)) %>%
+  .[1,3] %>%
+  as.numeric()
+
+test_r1 <- data.frame(AUC = auc, 
+                       ACCURACY = accuracy, 
+                       TPR = tpr, 
+                       FPR = fpr, 
+                       TNR = tnr, 
+                       FNR = fnr) %>%
+  mutate(Algo = 'Bagging') %>%
+  select(Algo, everything())
+test_r1 %>%
+  kable(caption = 'Testing')
+```
+
+The accuracy is 1.
+
+The sensitivity = TP/(TP+FN) = 1
+
+The specificity = TN/(FN+TN) = 1
+
+
+## LOOCV (Jackknife)
+
+I will use naive Bayes as the base model to build our LOOCV model. LOOCV information was included in our M11 learning model.
+
+```{r}
+# LOOCV model
+N<-nrow(df_train)
+df_train$label <- ifelse(df_train$label == 'BLACK', 0, 1)
+cv_df <- do.call('rbind',lapply(1:N,FUN=function(idx,data=df_train) { # for each observation
+   m <- naiveBayes(label~.,data=data[-idx,]) # train with all other observations
+   p <- predict(m,data[idx,-c(3)],type='raw') # predict that one observation
+   # NB returns the probabilities of the classes, as per Bayesian Classifier,
+   # we take the classs with the higher probability
+   pc <- unlist(apply(round(p),1,which.max))-1 # -1 to make class to be 0 or 1, which.max returns 1 or 2
+  #pred_tbl<-table(data[idx,c(9)],pc)
+  #pred_cfm<-caret::confusionMatrix(pred_tbl)
+  list(fold=idx,m=m,predicted=pc,actual=data[idx,c(3)]) # store the idx, model, predicted class and actual class
+  }
+))
+```
+
+`cv_df` now has the folds, models and the instance that was held out and the predicted label for that held out observation. We can then extract the metrics into a data.frame and average them.
+
+```{r}
+cv_df<-as.data.frame(cv_df)
+loocv_tbl<-table(as.numeric(cv_df$actual),as.numeric(cv_df$predicted))
+(loocv_caret_cfm<-caret::confusionMatrix(loocv_tbl))
+```
+
+The accuracy is 0.6538.
+
+The sensitivity is 0.6842.
+
+The specificity is 0.5714.
+
+```{r}
+df_test$label <- ifelse(df_test$label == 'BLACK', 0, 1)
+cv.perf <- as.data.frame(do.call('cbind',lapply(cv_df$m,FUN=function(m,data=df_test)
+{
+  v <- predict(m,data[,-c(3)],type='raw')
+  lbllist <- unlist(apply(round(v),1,which.max))-1
+}
+  )))
+
+np <- ncol(cv.perf)
+predclass <- unlist(
+  apply(cv.perf,1,FUN=function(v){ifelse(sum(v[2:length(v)])/np<0.5,0,1)}))
+
+loocvtbl <- table(df_test[,c(3)],predclass)
+(loocv_cfm <- caret::confusionMatrix(loocvtbl))
+```
+
+The accuracy is 0.5.
+
+The sensitivity is 0.5714.
+
+The specificity is 0.3333.
+
+
+# Performance
+
+Let's compare the performances from Bagging and LOOCV with the performances we got from HW1.
+
+
+## Metrics of Training Data
+
+|         |          | Training |        |        |        |
+|---------|----------|----------|--------|--------|--------|
+| Algo    | ACCURACY | TPR      | FPR    | TNR    | FNR    |
+| LR      | 0.8077   | 0.9375   | 0.4    | 0.6    | 0.0625 |
+| NB      | 0.7692   | 0.9375   | 0.5    | 0.5    | 0.0625 |
+| kNN3    |   1      |  1       |  0     |  1     |  0     |
+| kNN5    | 0.8846   |  1       | 0.3    | 0.7    |  0     |
+| Bagging |   1      |  1       |  0     |  1     |  0     |
+| LOOCV   | 0.6538   | 0.6842   | 0.4286 | 0.5714 | 0.3158 |
+
+## Metrics of Testing Data
+
+|         |          | Testing  |        |        |        |
+|---------|----------|----------|--------|--------|--------|
+| Algo    | ACCURACY | TPR      | FPR    | TNR    | FNR    |
+| LR      | 0.4      | 0.5      | 0.75   | 0.25   | 0.5    |
+| NB      | 0.5      | 0.6667   | 0.75   | 0.25   | 0.3333 |
+| kNN3    | 0.6      | 0.8333   | 0.75   | 0.25   | 0.1667 |
+| kNN5    | 0.7      | 0.8333   | 0.5    | 0.5    | 0.1667 |
+| Bagging |   1      |  1       |  0     |  1     |  0     |
+| LOOCV   | 0.5      | 0.5714   | 0.6667 | 0.3333 | 0.4286 |
+
+
+
+# Conclusion
+
+## Best Ability to Learn
+The performance data shows that **Bagging** model and kNN model with k=3 are the best models. Both of them has the best performance in training data, i.e. it has the best ability to learn among all models.
+
+## Best Ability to Generalize
+The performance data shows that **Bagging** model is the best model. It has the best performance in testing data, i.e. it has the best ability to generalize among all models. The second and third performances are the kNN models.
+
+## Overall Performance
+**Bagging has the best performances among both training and testing data**, while LOOCV has the worst performance in training data and bad performance in testing data.
+
+The huge difference between the two might be resulted from their base functions. The Bagging function we used from package `ipred` applies classification and regression trees while the LOOCV function used naive Bayes as base function. 
